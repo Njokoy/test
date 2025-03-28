@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Movies</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        /* Styles de base */
+        body {
+            font-family: 'Montserrat', sans-serif;
+            background: linear-gradient(135deg, #1A1A1A, #333333);
+            overflow-x: hidden;
+        }
+
+        /* Styles pour les cartes de films */
+        .movie-card {
+            background: linear-gradient(135deg, #6a11cb, #2575fc); /* Dégradé violet à bleu */
+            color: white; /* Texte en blanc */
+            border-radius: 12px;
+            padding: 16px;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .movie-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 12px rgba(0, 0, 0, 0.2);
+        }
+
+        /* Animation de dégradé pour le texte */
+        .gradient-text {
+            background: linear-gradient(90deg, #6a11cb, #2575fc);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            animation: hue 10s infinite linear;
+        }
+
+        @keyframes hue {
+            0% { filter: hue-rotate(0deg); }
+            100% { filter: hue-rotate(360deg); }
+        }
+
+        /* Styles pour la navbar et le footer */
+        .navbar, .footer {
+            background: linear-gradient(135deg, #6a11cb, #2575fc);
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        /* Animation d'apparition */
+        .animate-fade-in {
+            animation: fadeIn 1s ease-in-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Modal amélioré avec effets de survol */
+        .student-modal {
+            background: linear-gradient(135deg, #6a11cb, #2575fc); /* Dégradé violet à bleu */
+            color: white; /* Texte en blanc */
+            border-radius: 16px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            padding: 24px;
+            max-width: 400px;
+            width: 90%;
+            position: relative;
+        }
+
+        .close-button {
+            position: absolute;
+            top: 16px;
+            right: 16px;
+            background: #ff4757;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: background 0.3s ease, transform 0.3s ease;
+        }
+
+        .close-button:hover {
+            background: #ff6b81;
+            transform: scale(1.1);
+        }
+
+        .info-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            transition: background 0.3s ease, transform 0.3s ease;
+        }
+
+        .info-item:hover {
+            background: rgba(255, 255, 255, 0.1);
+            transform: translateX(10px);
+        }
+
+        .info-item:last-child {
+            border-bottom: none;
+        }
+
+        .info-icon {
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            transition: background 0.3s ease, transform 0.3s ease;
+        }
+
+        .info-item:hover .info-icon {
+            background: rgba(255, 255, 255, 0.3);
+            transform: scale(1.1);
+        }
+
+        .info-text {
+            font-size: 14px;
+            color: rgba(255, 255, 255, 0.9);
+        }
+
+        .info-text a {
+            color: #ffd700; /* Couleur or pour les liens */
+            text-decoration: none;
+            transition: opacity 0.3s;
+        }
+
+        .info-text a:hover {
+            opacity: 0.8;
+        }
+    </style>
+</head>
+<body class="text-white">
+
+    <!-- Splash Screen -->
+    <div id="splashScreen" class="fixed inset-0 flex flex-col items-center justify-center bg-black z-50">
+        <div class="wave-container">
+            <div class="wave"></div>
+        </div>
+        <div class="text-center">
+            <h1 class="text-5xl font-extrabold gradient-text pulse">Stephane Zoa L2H</h1>
+            <p class="text-xl text-gray-200 mt-4">Devoir de POD par Mr MBIA</p>
+        </div>
+    </div>
+
+    <!-- Navbar -->
+    <nav class="navbar shadow-lg animate-fade-in">
+        <div class="container mx-auto px-6 py-4 flex justify-between items-center">
+            <span class="text-xl font-bold gradient-text">My Movies by Zops</span>
+            <button onclick="openStudentModal()" 
+                    class="btn-animate bg-gradient-to-r from-yellow-500 to-yellow-600 text-gray-900 px-6 py-2 rounded-lg shadow-lg font-medium">
+                <i class="fas fa-user-graduate mr-2"></i> Show Student
+            </button>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <div class="container mx-auto mt-10 px-4 animate-fade-in">
+        <div class="max-w-6xl mx-auto">
+            <h3 class="text-3xl font-bold text-yellow-400 mb-8 text-center gradient-text">
+               TP: Orchestration d'une application web avec Docker Compose
+            </h3>
+            
+            <!-- Movie List -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                {{ movies_li | safe }}
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="footer mt-16 py-6 animate-fade-in">
+        <div class="container mx-auto text-center text-gray-200 font-medium">
+            &copy; 2025 Zoa Ondobo Paul Stéphane - Tous droits réservés
+        </div>
+    </footer>
+
+    <!-- Student Modal -->
+    <div id="studentModal" class="fixed inset-0 bg-black bg-opacity-70 hidden justify-center items-center p-4">
+        <div class="student-modal">
+            <!-- Close Button -->
+            <button onclick="closeStudentModal()" class="close-button">
+                <i class="fas fa-times"></i>
+            </button>
+            <h2 class="text-2xl font-bold text-white mb-6 text-center">Student Informations</h2>
+            
+            <!-- Info Block -->
+            <div class="space-y-4">
+                <!-- Nom Complet -->
+                <div class="info-item">
+                    <div class="info-icon">
+                        <i class="fas fa-user"></i>
+                    </div>
+                    <div class="info-text">
+                        <span class="font-bold">Nom Complet:</span> Zoa Ondobo Paul Stéphane
+                    </div>
+                </div>
+
+                <!-- Classe -->
+                <div class="info-item">
+                    <div class="info-icon">
+                        <i class="fas fa-graduation-cap"></i>
+                    </div>
+                    <div class="info-text">
+                        <span class="font-bold">Classe:</span> L2 H
+                    </div>
+                </div>
+
+                <!-- Devoir -->
+                <div class="info-item">
+                    <div class="info-icon">
+                        <i class="fas fa-book"></i>
+                    </div>
+                    <div class="info-text">
+                        <span class="font-bold">Devoir:</span> POD Assignment
+                    </div>
+                </div>
+
+                <!-- Téléphone -->
+                <div class="info-item">
+                    <div class="info-icon">
+                        <i class="fas fa-phone"></i>
+                    </div>
+                    <div class="info-text">
+                        <span class="font-bold">Téléphone:</span> 
+                        <a href="tel:+237686002112">+237 686 002 112</a>
+                    </div>
+                </div>
+
+                <!-- WhatsApp -->
+                <div class="info-item">
+                    <div class="info-icon">
+                        <i class="fab fa-whatsapp"></i>
+                    </div>
+                    <div class="info-text">
+                        <span class="font-bold">WhatsApp:</span> 
+                        <a href="https://wa.me/686002112">686002112</a>
+                    </div>
+                </div>
+
+                <!-- Email -->
+                <div class="info-item">
+                    <div class="info-icon">
+                        <i class="fas fa-envelope"></i>
+                    </div>
+                    <div class="info-text">
+                        <span class="font-bold">Email:</span> 
+                        <a href="mailto:stephanezoa2310@gmail.com">stephanezoa2310@gmail.com</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Splash Screen
+        setTimeout(() => {
+            document.getElementById('splashScreen').classList.add('hidden');
+        }, 5000);
+
+        // Modal Functions
+        function openStudentModal() {
+            document.getElementById('studentModal').classList.remove('hidden');
+        }
+
+        function closeStudentModal() {
+            document.getElementById('studentModal').classList.add('hidden');
+        }
+    </script>
+</body>
+</html>

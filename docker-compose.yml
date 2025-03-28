@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  web:
+    build: ./web
+    ports:
+      - "80:80"
+    depends_on:
+      - database
+    environment:
+      DATABASE_HOST: database
+      DATABASE_USER: zops
+      DATABASE_PASSWORD: zops2310
+      DATABASE_NAME: movies
+
+  database:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: movie123
+      MYSQL_DATABASE: movies
+      MYSQL_USER: zops
+      MYSQL_PASSWORD: zops2310
+    volumes:
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
