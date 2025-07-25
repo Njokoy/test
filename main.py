@@ -3,6 +3,7 @@ import logging
 import tempfile
 import asyncio
 import random
+import json
 from telegram.request import HTTPXRequest
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -46,10 +47,9 @@ PLATFORM_REGEX = re.compile(
 
 # Language support
 LANGUAGES = ['fr', 'en', 'zh', 'ru', 'es']
-user_languages = {}  # Store user language preferences
-user_searches = {}  # Store search results and pagination
-user_queues = {}    # Store download queues
-user_messages = {}  # Store message IDs for cleanup
+user_languages = {}
+download_queue = {}
+user_messages = {}
 
 # Translation dictionary
 TRANSLATIONS = {
@@ -57,16 +57,17 @@ TRANSLATIONS = {
         'welcome': "🎵 Bienvenue sur MusicBot, ton compagnon musical ! 🎉\n\n"
                  "1️⃣ Envoie le nom d'un artiste ou d'une chanson (ex. : 'Tayc N'y pense plus').\n"
                  "2️⃣ Choisis une vidéo dans les résultats.\n"
-                 "3️⃣ Télécharge l'audio en MP3 avec des métadonnées !\n\n"
-                 "💡 Astuce : Sois précis dans ta recherche pour de meilleurs résultats !",
+                 "3️⃣ Ajoute à la file d'attente pour télécharger en MP3 avec métadonnées !\n\n"
+                 "💡 Astuce : Sois précis dans ta recherche pour de meilleurs résultats !\n"
+                 "Utilise /end pour terminer la session et nettoyer la conversation.",
         'help': "🎵 Aide MusicBot 🎵\n\n"
                 "Je suis là pour t'aider à trouver et télécharger de la musique depuis YouTube ! Voici comment :\n"
                 "- /start : Lance le bot et découvre comment l'utiliser.\n"
-                "- /lang : Change la langue.\n"
+                "- /lang : Choisis ta langue.\n"
+                "- /end : Termine la session et nettoie la conversation.\n"
                 "- Envoie un nom d'artiste ou une chanson (ex. : 'Wizkid Essence').\n"
                 "- Choisis une vidéo dans les résultats avec les boutons.\n"
-                "- Les vidéos sélectionnées sont ajoutées à la file d'attente et téléchargées une par une.\n"
-                "- Utilise /cancel pour arrêter la session et nettoyer la conversation.\n\n"
+                "- Les chansons sont ajoutées à la file d'attente et téléchargées séquentiellement.\n\n"
                 "💡 Astuce : Utilise 'artiste - titre' pour des recherches précises.",
         'searching': "🔍 Analyse '{query}' en cours...",
         'no_results': "😕 Aucun résultat trouvé. \n Essaye 'artiste - titre' 🎧 !",
@@ -76,35 +77,31 @@ TRANSLATIONS = {
         'platform_unsupported': "❌ Plateforme non reconnue.",
         'link_unsupported': "❌ Ce lien n'est pas pris en charge.",
         'downloading': "📥 Téléchargement audio en cours : {title}...",
-        'download_failed': "❌ Échec du téléchargement pour {title}. Vérifie la vidéo ou réessaie.",
-        'send_error': "❌ Problème lors de l'envoi du fichier audio pour {title}.",
-        'download_success': "✅ Audio téléchargé : {title} !",
-        'queue_empty': [
-            "🎉 File d'attente terminée ! Envie d'une autre chanson ?",
-            "🔥 Tous les téléchargements sont terminés ! Relance une recherche !",
-            "🎧 File vide. Quelle chanson veux-tu ensuite ?"
-        ],
-        'cancel_search': "✅ Session terminée. Tous les messages ont été nettoyés. Relance une nouvelle recherche !",
+        'download_failed': "❌ Échec du téléchargement pour {title}. Réessaie.",
+        'send_error': "❌ Problème lors de l'envoi de {title}.",
+        'added_to_queue': "✅ {title} ajouté à la file d'attente !",
+        'queue_empty': "🎉 Tous les téléchargements sont terminés ! Envoie une nouvelle recherche ou un lien.",
+        'cancel_search': "Recherche annulée. Relance une nouvelle recherche !",
+        'session_ended': "✅ Session terminée. Tous les messages temporaires ont été supprimés.",
         'lang_prompt': "🌐 Choisis ta langue / Choose your language / 选择你的语言 / Выберите язык / Elige tu idioma:",
         'lang_selected': "✅ Langue sélectionnée : {lang}",
-        'lang_invalid': "❌ Langue non valide. Choisis parmi : fr (Français), en (English), zh (Mandarin), ru (Русский), es (Español)",
-        'queue_added': "✅ Vidéo ajoutée à la file d'attente : {title}",
-        'queue_status': "📋 File d'attente : {count} vidéo(s) en attente."
+        'lang_invalid': "❌ Langue non valide. Choisis parmi : fr (Français), en (English), zh (Mandarin), ru (Русский), es (Español)"
     },
     'en': {
         'welcome': "🎵 Welcome to MusicBot, your musical companion! 🎉\n\n"
                  "1️⃣ Send an artist or song name (e.g., 'Tayc N'y pense plus').\n"
                  "2️⃣ Choose a video from the results.\n"
-                 "3️⃣ Download the audio as MP3 with metadata!\n\n"
-                 "💡 Tip: Be specific with your search for better results!",
+                 "3️⃣ Add to the queue to download as MP3 with metadata!\n\n"
+                 "💡 Tip: Be specific with your search for better results!\n"
+                 "Use /end to end the session and clean the chat.",
         'help': "🎵 MusicBot Help 🎵\n\n"
                 "I'm here to help you find and download music from YouTube! Here's how:\n"
                 "- /start: Start the bot and learn how to use it.\n"
-                "- /lang: Change the language.\n"
+                "- /lang: Choose your language.\n"
+                "- /end: End the session and clean the chat.\n"
                 "- Send an artist or song name (e.g., 'Wizkid Essence').\n"
                 "- Choose a video from the results using the buttons.\n"
-                "- Selected videos are added to the queue and downloaded one by one.\n"
-                "- Use /cancel to stop the session and clean up the chat.\n\n"
+                "- Songs are added to the queue and downloaded sequentially.\n\n"
                 "💡 Tip: Use 'artist - title' for precise searches.",
         'searching': "🔍 Searching for '{query}'...",
         'no_results': "😕 No results found. \n Try 'artist - title' 🎧!",
@@ -114,35 +111,31 @@ TRANSLATIONS = {
         'platform_unsupported': "❌ Unrecognized platform.",
         'link_unsupported': "❌ This link is not supported.",
         'downloading': "📥 Downloading audio: {title}...",
-        'download_failed': "❌ Download failed for {title}. Check the link or try again.",
-        'send_error': "❌ Issue sending the audio file for {title}.",
-        'download_success': "✅ Audio downloaded: {title}!",
-        'queue_empty': [
-            "🎉 Queue completed! Want another song?",
-            "🔥 All downloads finished! Start a new search!",
-            "🎧 Queue empty. What's the next song?"
-        ],
-        'cancel_search': "✅ Session ended. All messages have been cleaned. Start a new search!",
+        'download_failed': "❌ Download failed for {title}. Try again.",
+        'send_error': "❌ Issue sending {title}.",
+        'added_to_queue': "✅ {title} added to the queue!",
+        'queue_empty': "🎉 All downloads completed! Send a new search or link.",
+        'cancel_search': "Search canceled. Start a new search!",
+        'session_ended': "✅ Session ended. All temporary messages have been deleted.",
         'lang_prompt': "🌐 Choisis ta langue / Choose your language / 选择你的语言 / Выберите язык / Elige tu idioma:",
         'lang_selected': "✅ Language selected: {lang}",
-        'lang_invalid': "❌ Invalid language. Choose from: fr (Français), en (English), zh (Mandarin), ru (Русский), es (Español)",
-        'queue_added': "✅ Video added to queue: {title}",
-        'queue_status': "📋 Queue: {count} video(s) pending."
+        'lang_invalid': "❌ Invalid language. Choose from: fr (Français), en (English), zh (Mandarin), ru (Русский), es (Español)"
     },
     'zh': {
         'welcome': "🎵 欢迎使用 MusicBot，你的音乐伙伴！🎉\n\n"
                  "1️⃣ 发送歌手或歌曲名称（例如：“Tayc N'y pense plus”）。\n"
                  "2️⃣ 从结果中选择一个视频。\n"
-                 "3️⃣ 下载带有元数据的MP3音频！\n\n"
-                 "💡 提示：搜索时尽量具体以获得更好的结果！",
+                 "3️⃣ 添加到队列以下载带有元数据的MP3！\n\n"
+                 "💡 提示：搜索时尽量具体以获得更好的结果！\n"
+                 "使用 /end 结束会话并清理聊天。",
         'help': "🎵 MusicBot 帮助 🎵\n\n"
                 "我可以帮助你从 YouTube 查找和下载音乐！操作方法如下：\n"
                 "- /start：启动机器人并了解如何使用。\n"
-                "- /lang：更改语言。\n"
+                "- /lang：选择你的语言。\n"
+                "- /end：结束会话并清理聊天。\n"
                 "- 发送歌手或歌曲名称（例如：“Wizkid Essence”）。\n"
                 "- 使用按钮从结果中选择一个视频。\n"
-                "- 所选视频将添加到队列并逐一下载。\n"
-                "- 使用 /cancel 停止会话并清理聊天。\n\n"
+                "- 歌曲将添加到队列并按顺序下载。\n\n"
                 "💡 提示：使用“歌手 - 标题”进行精确搜索。",
         'searching': "🔍 正在搜索 '{query}'...",
         'no_results': "😕 未找到结果。\n 尝试“歌手 - 标题” 🎧！",
@@ -152,35 +145,31 @@ TRANSLATIONS = {
         'platform_unsupported': "❌ 不支持的平台。",
         'link_unsupported': "❌ 不支持此链接。",
         'downloading': "📥 正在下载音频：{title}...",
-        'download_failed': "❌ 下载失败：{title}。请检查链接或重试。",
-        'send_error': "❌ 发送音频文件时出现问题：{title}。",
-        'download_success': "✅ 音频已下载：{title}！",
-        'queue_empty': [
-            "🎉 队列已完成！想要另一首歌吗？",
-            "🔥 所有下载已完成！开始新的搜索！",
-            "🎧 队列为空。下一首歌是什么？"
-        ],
-        'cancel_search': "✅ 会话已结束。所有消息已清理。开始新的搜索！",
+        'download_failed': "❌ {title} 下载失败。请重试。",
+        'send_error': "❌ 发送 {title} 时出现问题。",
+        'added_to_queue': "✅ {title} 已添加到队列！",
+        'queue_empty': "🎉 所有下载已完成！发送新的搜索或链接。",
+        'cancel_search': "搜索已取消。开始新的搜索！",
+        'session_ended': "✅ 会话已结束。所有临时消息已被删除。",
         'lang_prompt': "🌐 Choisis ta langue / Choose your language / 选择你的语言 / Выберите язык / Elige tu idioma:",
         'lang_selected': "✅ 已选择语言：{lang}",
-        'lang_invalid': "❌ 无效语言。请从以下选项中选择：fr (Français), en (English), zh (Mandarin), ru (Русский), es (Español)",
-        'queue_added': "✅ 视频已添加到队列：{title}",
-        'queue_status': "📋 队列：{count} 个视频待处理。"
+        'lang_invalid': "❌ 无效语言。请从以下选项中选择：fr (Français), en (English), zh (Mandarin), ru (Русский), es (Español)"
     },
     'ru': {
         'welcome': "🎵 Добро пожаловать в MusicBot, ваш музыкальный помощник! 🎉\n\n"
                  "1️⃣ Отправьте имя исполнителя или песни (например, 'Tayc N'y pense plus').\n"
                  "2️⃣ Выберите видео из результатов.\n"
-                 "3️⃣ Скачайте аудио в формате MP3 с метаданными!\n\n"
-                 "💡 Совет: Будьте точны в поиске для лучших результатов!",
+                 "3️⃣ Добавьте в очередь для скачивания в формате MP3 с метаданными!\n\n"
+                 "💡 Совет: Будьте точны в поиске для лучших результатов!\n"
+                 "Используйте /end для завершения сессии и очистки чата.",
         'help': "🎵 Помощь по MusicBot 🎵\n\n"
                 "Я здесь, чтобы помочь вам находить и скачивать музыку с YouTube! Вот как это работает:\n"
                 "- /start: Запустите бот и узнайте, как им пользоваться.\n"
-                "- /lang: Изменить язык.\n"
+                "- /lang: Выберите язык.\n"
+                "- /end: Завершите сессию и очистите чат.\n"
                 "- Отправьте имя исполнителя или песни (например, 'Wizkid Essence').\n"
                 "- Выберите видео из результатов с помощью кнопок.\n"
-                "- Выбранные видео добавляются в очередь и скачиваются по очереди.\n"
-                "- Используйте /cancel, чтобы остановить сессию и очистить чат.\n\n"
+                "- Песни добавляются в очередь и скачиваются последовательно.\n\n"
                 "💡 Совет: Используйте формат 'исполнитель - название' для точного поиска.",
         'searching': "🔍 Поиск '{query}'...",
         'no_results': "😕 Результатов не найдено. \n Попробуйте 'исполнитель - название' 🎧!",
@@ -190,35 +179,31 @@ TRANSLATIONS = {
         'platform_unsupported': "❌ Нераспознанная платформа.",
         'link_unsupported': "❌ Эта ссылка не поддерживается.",
         'downloading': "📥 Загрузка аудио: {title}...",
-        'download_failed': "❌ Не удалось скачать: {title}. Проверьте ссылку или попробуйте снова.",
-        'send_error': "❌ Проблема при отправке аудиофайла: {title}.",
-        'download_success': "✅ Аудио загружено: {title}!",
-        'queue_empty': [
-            "🎉 Очередь завершена! Хотите еще одну песню?",
-            "🔥 Все загрузки завершены! Начните новый поиск!",
-            "🎧 Очередь пуста. Какая следующая песня?"
-        ],
-        'cancel_search': "✅ Сессия завершена. Все сообщения очищены. Начните новый поиск!",
+        'download_failed': "❌ Не удалось скачать {title}. Попробуйте снова.",
+        'send_error': "❌ Проблема при отправке {title}.",
+        'added_to_queue': "✅ {title} добавлено в очередь!",
+        'queue_empty': "🎉 Все загрузки завершены! Отправьте новый поиск или ссылку.",
+        'cancel_search': "Поиск отменен. Начните новый поиск!",
+        'session_ended': "✅ Сессия завершена. Все временные сообщения удалены.",
         'lang_prompt': "🌐 Choisis ta langue / Choose your language / 选择你的语言 / Выберите язык / Elige tu idioma:",
         'lang_selected': "✅ Язык выбран: {lang}",
-        'lang_invalid': "❌ Недопустимый язык. Выберите из: fr (Français), en (English), zh (Mandarin), ru (Русский), es (Español)",
-        'queue_added': "✅ Видео добавлено в очередь: {title}",
-        'queue_status': "📋 Очередь: {count} видео в ожидании."
+        'lang_invalid': "❌ Недопустимый язык. Выберите из: fr (Français), en (English), zh (Mandarin), ru (Русский), es (Español)"
     },
     'es': {
         'welcome': "🎵 ¡Bienvenido a MusicBot, tu compañero musical! 🎉\n\n"
                  "1️⃣ Envía el nombre de un artista o canción (ej. 'Tayc N'y pense plus').\n"
                  "2️⃣ Elige un video de los resultados.\n"
-                 "3️⃣ ¡Descarga el audio en MP3 con metadatos!\n\n"
-                 "💡 Consejo: Sé específico en tu búsqueda para mejores resultados.",
+                 "3️⃣ ¡Añade a la cola para descargar en MP3 con metadatos!\n\n"
+                 "💡 Consejo: Sé específico en tu búsqueda para mejores resultados.\n"
+                 "Usa /end para finalizar la sesión y limpiar el chat.",
         'help': "🎵 Ayuda de MusicBot 🎵\n\n"
                 "¡Estoy aquí para ayudarte a encontrar y descargar música de YouTube! Así funciona:\n"
                 "- /start: Inicia el bot y descubre cómo usarlo.\n"
-                "- /lang: Cambiar el idioma.\n"
+                "- /lang: Elige tu idioma.\n"
+                "- /end: Finaliza la sesión y limpia el chat.\n"
                 "- Envía el nombre de un artista o canción (ej. 'Wizkid Essence').\n"
                 "- Elige un video de los resultados con los botones.\n"
-                "- Los videos seleccionados se añaden a la cola y se descargan uno por uno.\n"
-                "- Usa /cancel para detener la sesión y limpiar el chat.\n\n"
+                "- Las canciones se añaden a la cola y se descargan secuencialmente.\n\n"
                 "💡 Consejo: Usa 'artista - título' para búsquedas precisas.",
         'searching': "🔍 Buscando '{query}'...",
         'no_results': "😕 No se encontraron resultados. \n ¡Prueba 'artista - título' 🎧!",
@@ -228,20 +213,15 @@ TRANSLATIONS = {
         'platform_unsupported': "❌ Plataforma no reconocida.",
         'link_unsupported': "❌ Este enlace no es compatible.",
         'downloading': "📥 Descargando audio: {title}...",
-        'download_failed': "❌ Falló la descarga para {title}. Verifica el enlace o intenta de nuevo.",
-        'send_error': "❌ Problema al enviar el archivo de audio para {title}.",
-        'download_success': "✅ ¡Audio descargado: {title}!",
-        'queue_empty': [
-            "🎉 ¡Cola completada! ¿Quieres otra canción?",
-            "🔥 ¡Todas las descargas terminadas! ¡Inicia una nueva búsqueda!",
-            "🎧 Cola vacía. ¿Cuál es la próxima canción?"
-        ],
-        'cancel_search': "✅ Sesión terminada. Todos los mensajes han sido limpiados. ¡Inicia una nueva búsqueda!",
+        'download_failed': "❌ Falló la descarga de {title}. Intenta de nuevo.",
+        'send_error': "❌ Problema al enviar {title}.",
+        'added_to_queue': "✅ ¡{title} añadido a la cola!",
+        'queue_empty': "🎉 ¡Todas las descargas completadas! Envía una nueva búsqueda o enlace.",
+        'cancel_search': "Búsqueda cancelada. ¡Inicia una nueva búsqueda!",
+        'session_ended': "✅ Sesión finalizada. Todos los mensajes temporales han sido eliminados.",
         'lang_prompt': "🌐 Choisis ta langue / Choose your language / 选择你的语言 / Выберите язык / Elige tu idioma:",
         'lang_selected': "✅ Idioma seleccionado: {lang}",
-        'lang_invalid': "❌ Idioma no válido. Elige entre: fr (Français), en (English), zh (Mandarin), ru (Русский), es (Español)",
-        'queue_added': "✅ Video añadido a la cola: {title}",
-        'queue_status': "📋 Cola: {count} video(s) pendientes."
+        'lang_invalid': "❌ Idioma no válido. Elige entre: fr (Français), en (English), zh (Mandarin), ru (Русский), es (Español)"
     }
 }
 
@@ -249,9 +229,49 @@ TRANSLATIONS = {
 def get_user_language(user_id):
     return user_languages.get(user_id, 'fr')
 
-# Language selection command
+# Track message for cleanup
+async def track_message(context, chat_id, message):
+    if chat_id not in user_messages:
+        user_messages[chat_id] = []
+    user_messages[chat_id].append(message.message_id)
+
+# Send temporary message
+async def send_temporary_message(context, chat_id, text_key, delay=5, **kwargs):
+    lang = get_user_language(context._user_id)
+    text = TRANSLATIONS[lang][text_key].format(**kwargs) if kwargs else TRANSLATIONS[lang][text_key]
+    try:
+        message = await context.bot.send_message(chat_id=chat_id, text=text)
+        await track_message(context, chat_id, message)
+        await asyncio.sleep(delay)
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=message.message_id)
+            user_messages[chat_id].remove(message.message_id)
+        except:
+            pass
+    except Exception as e:
+        logger.error(f"Failed to send temporary message: {e}")
+
+# Commande /start
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    logger.info(f"User {user_id} started the bot.")
+    lang = get_user_language(user_id)
+    message = await update.message.reply_text(TRANSLATIONS[lang]['welcome'])
+    await track_message(context, chat_id, message)
+
+# Commande /help
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    logger.info(f"User {user_id} requested help.")
+    lang = get_user_language(user_id)
+    await send_temporary_message(context, chat_id, 'help', delay=20)
+
+# Commande /lang
 async def set_language(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
     keyboard = [
         [
             InlineKeyboardButton("Français", callback_data="lang_fr"),
@@ -266,37 +286,30 @@ async def set_language(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     lang = get_user_language(user_id)
     message = await update.message.reply_text(TRANSLATIONS[lang]['lang_prompt'], reply_markup=reply_markup)
-    user_messages.setdefault(user_id, []).append((update.effective_chat.id, message.message_id))
+    await track_message(context, chat_id, message)
 
-# Cancel command to end session and clean up
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# Commande /end
+async def end_session(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    lang = get_user_language(user_id)
     chat_id = update.effective_chat.id
+    lang = get_user_language(user_id)
+    logger.info(f"User {user_id} ended the session.")
 
-    # Clear session data
+    # Clear user data
     user_searches.pop(user_id, None)
-    user_queues.pop(user_id, None)
+    download_queue.pop(user_id, None)
 
-    # Delete all stored messages
-    if user_id in user_messages:
-        for chat_id, message_id in user_messages[user_id]:
+    # Delete tracked messages
+    if chat_id in user_messages:
+        for message_id in user_messages[chat_id][:]:
             try:
                 await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
             except:
                 pass
-        user_messages.pop(user_id, None)
+        user_messages.pop(chat_id, None)
 
-    message = await update.message.reply_text(TRANSLATIONS[lang]['cancel_search'])
-    user_messages.setdefault(user_id, []).append((chat_id, message.message_id))
-    await asyncio.sleep(7)
-    try:
-        await context.bot.delete_message(chat_id=chat_id, message_id=message.message_id)
-        user_messages[user_id].remove((chat_id, message.message_id))
-        if not user_messages[user_id]:
-            user_messages.pop(user_id, None)
-    except:
-        pass
+    message = await update.message.reply_text(TRANSLATIONS[lang]['session_ended'])
+    await track_message(context, chat_id, message)
 
 # Gestion des redirections
 def resolve_redirect(url):
@@ -305,7 +318,7 @@ def resolve_redirect(url):
             response = client.get(url)
             return str(response.url)
     except Exception as e:
-        logger.error(f"Erreur de résolution du lien : {e}")
+        logger.error(f"Redirect resolution error: {e}")
         return url
 
 # Détection de l'URL
@@ -324,62 +337,37 @@ def detect_platform(url):
     else:
         return "unknown"
 
-# Send temporary message
-async def send_temporary_message(context, chat_id, text_key, user_id, delay=5, **kwargs):
-    lang = get_user_language(user_id)
-    text = TRANSLATIONS[lang][text_key].format(**kwargs) if kwargs else TRANSLATIONS[lang][text_key]
-    message = await context.bot.send_message(chat_id=chat_id, text=text)
-    user_messages.setdefault(user_id, []).append((chat_id, message.message_id))
-    await asyncio.sleep(delay)
-    try:
-        await context.bot.delete_message(chat_id=chat_id, message_id=message.message_id)
-        user_messages[user_id].remove((chat_id, message.message_id))
-        if not user_messages[user_id]:
-            user_messages.pop(user_id, None)
-    except:
-        pass
+# Stockage recherches utilisateurs
+user_searches = {}
+RESULTS_PER_PAGE = 5
 
-# Command /start
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    logger.info(f"User {user_id} started the bot.")
-    lang = get_user_language(user_id)
-    message = await update.message.reply_text(TRANSLATIONS[lang]['welcome'])
-    user_messages.setdefault(user_id, []).append((update.effective_chat.id, message.message_id))
-
-# Command /help
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    logger.info(f"User {user_id} requested help.")
-    lang = get_user_language(user_id)
-    await send_temporary_message(context, update.effective_chat.id, 'help', user_id, delay=20)
-
-# Search YouTube
+# Recherche YouTube
 async def search_music(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.message.text.strip()
     user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
     logger.info(f"Search or link received: \"{query}\" by user {user_id}")
     lang = get_user_language(user_id)
-    chat_id = update.effective_chat.id
 
-    # If link detected
+    # Si lien détecté
     if re.search(PLATFORM_REGEX, query):
         resolved_url = resolve_redirect(query)
         platform = detect_platform(resolved_url)
 
-        if platform in ["youtube", "tiktok", "facebook"]:
-            user_queues.setdefault(user_id, []).append((resolved_url, None))
-            await process_queue(context, update.message, user_id)
-        elif platform in ["instagram", "likee"]:
-            user_queues.setdefault(user_id, []).append((resolved_url, None))
-            await process_queue(context, update.message, user_id)
+        if platform in ["youtube", "tiktok", "facebook", "instagram", "likee"]:
+            if user_id not in download_queue:
+                download_queue[user_id] = []
+            download_queue[user_id].append({'url': resolved_url, 'title': query, 'platform': platform})
+            message = await update.message.reply_text(TRANSLATIONS[lang]['added_to_queue'].format(title=query))
+            await track_message(context, chat_id, message)
+            asyncio.create_task(process_download_queue(context, user_id, chat_id))
         else:
-            await send_temporary_message(context, chat_id, 'platform_unsupported', user_id)
+            await send_temporary_message(context, chat_id, 'platform_unsupported')
         return
 
-    # YouTube search
+    # Recherche YouTube classique
     message = await update.message.reply_text(TRANSLATIONS[lang]['searching'].format(query=query))
-    user_messages.setdefault(user_id, []).append((chat_id, message.message_id))
+    await track_message(context, chat_id, message)
 
     try:
         search_response = youtube.search().list(
@@ -388,38 +376,42 @@ async def search_music(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         videos = search_response.get('items', [])
         if not videos:
-            await send_temporary_message(context, chat_id, 'no_results', user_id, delay=10)
+            await send_temporary_message(context, chat_id, 'no_results', delay=10)
             return
 
         user_searches[user_id] = {
             'query': query,
             'results': videos,
-            'page': 0,
-            'message_id': None
+            'page': 0
         }
 
         await send_results_page(update, context, user_id)
 
     except Exception as e:
-        logger.error(f"Erreur recherche YouTube : {e}")
-        await send_temporary_message(context, chat_id, 'search_error', user_id)
+        logger.error(f"YouTube search error: {e}")
+        await send_temporary_message(context, chat_id, 'search_error')
 
-# Display paginated results
+# Affichage résultats paginés
 async def send_results_page(update_or_query, context, user_id):
     search_data = user_searches.get(user_id)
     if not search_data:
         lang = get_user_language(user_id)
         message = await update_or_query.message.reply_text(TRANSLATIONS[lang]['session_expired'])
-        user_messages.setdefault(user_id, []).append((update_or_query.message.chat.id, message.message_id))
+        await track_message(context, update_or_query.message.chat.id, message)
         return
 
     page = search_data['page']
     results = search_data['results']
-    chat_id = update_or_query.message.chat.id if hasattr(update_or_query, "message") else update_or_query.message.chat.id
-    lang = get_user_language(user_id)
+    chat_id = update_or_query.effective_chat.id if hasattr(update_or_query, "effective_chat") else update_or_query.message.chat.id
 
-    start_idx = page * 5
-    end_idx = start_idx + 5
+    if not results:
+        lang = get_user_language(user_id)
+        message = await update_or_query.message.reply_text(TRANSLATIONS[lang]['no_results'])
+        await track_message(context, chat_id, message)
+        return
+
+    start_idx = page * RESULTS_PER_PAGE
+    end_idx = min(start_idx + RESULTS_PER_PAGE, len(results))
     page_results = results[start_idx:end_idx]
 
     keyboard = []
@@ -428,7 +420,7 @@ async def send_results_page(update_or_query, context, user_id):
         video_id = video['id']['videoId']
         short_title = (title[:60] + "...") if len(title) > 60 else title
         keyboard.append([
-            InlineKeyboardButton(f"{idx}. {short_title}", callback_data=f"video_{video_id}_{title}")
+            InlineKeyboardButton(f"{idx}. {short_title}", callback_data=f"video_{video_id}"),
         ])
 
     nav_buttons = []
@@ -441,21 +433,27 @@ async def send_results_page(update_or_query, context, user_id):
     keyboard.append(nav_buttons)
     reply_markup = InlineKeyboardMarkup(keyboard)
     user_name = update_or_query.effective_user.first_name if hasattr(update_or_query, "effective_user") else "Utilisateur"
+    lang = get_user_language(user_id)
     text = TRANSLATIONS[lang]['results'].format(query=search_data['query'], page=page + 1, user=user_name)
 
-    if 'message_id' not in search_data or not search_data['message_id']:
-        message = await update_or_query.message.reply_text(text, reply_markup=reply_markup)
-        user_searches[user_id]['message_id'] = message.message_id
-        user_messages.setdefault(user_id, []).append((chat_id, message.message_id))
-    else:
-        try:
-            await context.bot.edit_message_text(chat_id=chat_id, message_id=search_data['message_id'], text=text, reply_markup=reply_markup)
-        except:
-            message = await update_or_query.message.reply_text(text, reply_markup=reply_markup)
-            user_searches[user_id]['message_id'] = message.message_id
-            user_messages.setdefault(user_id, []).append((chat_id, message.message_id))
+    try:
+        if 'message_id' not in search_data:
+            sent_msg = await update_or_query.message.reply_text(text, reply_markup=reply_markup)
+            user_searches[user_id]['message_id'] = sent_msg.message_id
+            await track_message(context, chat_id, sent_msg)
+        else:
+            message_id = search_data['message_id']
+            try:
+                await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text, reply_markup=reply_markup)
+            except Exception as e:
+                logger.warning(f"Failed to edit message {message_id}: {e}")
+                sent_msg = await update_or_query.message.reply_text(text, reply_markup=reply_markup)
+                user_searches[user_id]['message_id'] = sent_msg.message_id
+                await track_message(context, chat_id, sent_msg)
+    except Exception as e:
+        logger.error(f"Failed to send results page: {e}, Response: {getattr(e, 'response', 'No response')}")
+        await send_temporary_message(context, chat_id, 'search_error')
 
-# Download audio
 def download_audio_from_url(url, temp_dir):
     try:
         ydl_opts = {
@@ -487,12 +485,12 @@ def download_audio_from_url(url, temp_dir):
             audiofile['genre'] = meta['genre']
             audiofile.save()
         except Exception as e:
-            logger.warning(f"Pas de métadonnées ajoutées : {e}")
+            logger.warning(f"No metadata added: {e}")
 
         return filepath, meta
 
     except Exception as e:
-        logger.error(f"Erreur téléchargement yt-dlp : {e}")
+        logger.error(f"yt-dlp download error: {e}")
         return None, None
 
 def is_supported_media_url(url):
@@ -502,17 +500,24 @@ def is_supported_media_url(url):
     ]
     return any(domain in url for domain in supported_domains)
 
-# Process download queue
-async def process_queue(context, message_or_query, user_id):
-    chat_id = message_or_query.chat.id
+async def process_download_queue(context, user_id, chat_id):
+    if user_id not in download_queue or not download_queue[user_id]:
+        return
+
     lang = get_user_language(user_id)
+    while download_queue[user_id]:
+        item = download_queue[user_id][0]
+        url = item['url']
+        title = item['title']
+        platform = item['platform']
 
-    while user_queues.get(user_id):
-        url, title = user_queues[user_id][0]
-        title_display = title if title else url
+        if not is_supported_media_url(url):
+            await send_temporary_message(context, chat_id, 'link_unsupported')
+            download_queue[user_id].pop(0)
+            continue
 
-        message = await context.bot.send_message(chat_id=chat_id, text=TRANSLATIONS[lang]['downloading'].format(title=title_display))
-        user_messages.setdefault(user_id, []).append((chat_id, message.message_id))
+        message = await context.bot.send_message(chat_id=chat_id, text=TRANSLATIONS[lang]['downloading'].format(title=title))
+        await track_message(context, chat_id, message)
 
         temp_dir = tempfile.gettempdir()
         loop = asyncio.get_running_loop()
@@ -522,46 +527,32 @@ async def process_queue(context, message_or_query, user_id):
             try:
                 with open(filepath, 'rb') as audio:
                     await context.bot.send_audio(chat_id=chat_id, audio=audio, title=f"{meta['titre']}.mp3")
-                success_message = await context.bot.send_message(chat_id=chat_id, text=TRANSLATIONS[lang]['download_success'].format(title=meta['titre']))
-                user_messages.setdefault(user_id, []).append((chat_id, success_message.message_id))
-                await asyncio.sleep(5)
-                await context.bot.delete_message(chat_id=chat_id, message_id=success_message.message_id)
-                user_messages[user_id].remove((chat_id, success_message.message_id))
             except Exception as e:
-                logger.error(f"Erreur envoi audio : {e}")
-                await send_temporary_message(context, chat_id, 'send_error', user_id, delay=10, title=meta['titre'])
+                logger.error(f"Audio send error: {e}")
+                await send_temporary_message(context, chat_id, 'send_error', title=meta['titre'], delay=10)
             finally:
                 os.remove(filepath)
         else:
-            await send_temporary_message(context, chat_id, 'download_failed', user_id, delay=10, title=title_display)
+            await send_temporary_message(context, chat_id, 'download_failed', title=title)
 
-        user_queues[user_id].pop(0)
-        if user_queues.get(user_id):
-            count = len(user_queues[user_id])
-            status_message = await context.bot.send_message(chat_id=chat_id, text=TRANSLATIONS[lang]['queue_status'].format(count=count))
-            user_messages.setdefault(user_id, []).append((chat_id, status_message.message_id))
-            await asyncio.sleep(5)
-            await context.bot.delete_message(chat_id=chat_id, message_id=status_message.message_id)
-            user_messages[user_id].remove((chat_id, status_message.message_id))
+        download_queue[user_id].pop(0)
 
-        if not user_queues.get(user_id):
-            messages = TRANSLATIONS[lang]['queue_empty']
-            queue_message = await context.bot.send_message(chat_id=chat_id, text=random.choice(messages))
-            user_messages.setdefault(user_id, []).append((chat_id, queue_message.message_id))
+    # Notify when queue is empty
+    message = await context.bot.send_message(chat_id=chat_id, text=TRANSLATIONS[lang]['queue_empty'])
+    await track_message(context, chat_id, message)
 
-# Button handler
+# Bouton gestion
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
+    chat_id = query.message.chat.id
     await query.answer()
     data = query.data
     lang = get_user_language(user_id)
-    chat_id = query.message.chat.id
 
     if data in ("page_prev", "page_next"):
         if user_id not in user_searches:
             await query.edit_message_text(TRANSLATIONS[lang]['session_expired'])
-            user_messages.setdefault(user_id, []).append((chat_id, query.message.message_id))
             return
 
         if data == "page_prev":
@@ -573,46 +564,22 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "cancel_search":
-        # Clear session data
         user_searches.pop(user_id, None)
-        user_queues.pop(user_id, None)
-
-        # Delete all stored messages
-        if user_id in user_messages:
-            for chat_id, message_id in user_messages[user_id]:
-                try:
-                    await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
-                except:
-                    pass
-            user_messages.pop(user_id, None)
-
+        download_queue.pop(user_id, None)
         message = await query.message.reply_text(TRANSLATIONS[lang]['cancel_search'])
-        user_messages.setdefault(user_id, []).append((chat_id, message.message_id))
-        await asyncio.sleep(7)
-        try:
-            await context.bot.delete_message(chat_id=chat_id, message_id=message.message_id)
-            user_messages[user_id].remove((chat_id, message.message_id))
-            if not user_messages[user_id]:
-                user_messages.pop(user_id, None)
-        except:
-            pass
+        await track_message(context, chat_id, message)
         return
 
     if data.startswith("video_"):
-        video_id = data.split("_")[1]
-        title = "_".join(data.split("_")[2:])
+        video_id = data[len("video_"):]
         url = f'https://www.youtube.com/watch?v={video_id}'
-        user_queues.setdefault(user_id, []).append((url, title))
-        message = await query.message.reply_text(TRANSLATIONS[lang]['queue_added'].format(title=title))
-        user_messages.setdefault(user_id, []).append((chat_id, message.message_id))
-        await asyncio.sleep(5)
-        try:
-            await context.bot.delete_message(chat_id=chat_id, message_id=message.message_id)
-            user_messages[user_id].remove((chat_id, message.message_id))
-        except:
-            pass
-        if len(user_queues[user_id]) == 1:  # Start processing if this is the first item
-            asyncio.create_task(process_queue(context, query.message, user_id))
+        title = next((v['snippet']['title'] for v in user_searches[user_id]['results'] if v['id']['videoId'] == video_id), "Unknown")
+        if user_id not in download_queue:
+            download_queue[user_id] = []
+        download_queue[user_id].append({'url': url, 'title': title, 'platform': 'youtube'})
+        message = await query.message.reply_text(TRANSLATIONS[lang]['added_to_queue'].format(title=title))
+        await track_message(context, chat_id, message)
+        asyncio.create_task(process_download_queue(context, user_id, chat_id))
         return
 
     if data.startswith("lang_"):
@@ -621,13 +588,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_languages[user_id] = lang_code
             lang_name = {'fr': 'Français', 'en': 'English', 'zh': 'Mandarin', 'ru': 'Русский', 'es': 'Español'}[lang_code]
             await query.edit_message_text(TRANSLATIONS[lang_code]['lang_selected'].format(lang=lang_name))
-            user_messages.setdefault(user_id, []).append((chat_id, query.message.message_id))
         else:
             await query.edit_message_text(TRANSLATIONS[lang]['lang_invalid'])
-            user_messages.setdefault(user_id, []).append((chat_id, query.message.message_id))
-        return
 
-# Extract metadata
+# Extraction intelligente des métadonnées
 def extraire_metadonnees(info):
     title = info.get('title', '')
     uploader = info.get('uploader', '')
@@ -661,7 +625,7 @@ def extraire_metadonnees(info):
         'featuring': featuring
     }
 
-# Main
+# Lancement
 def main():
     request = HTTPXRequest(connect_timeout=60, read_timeout=60, write_timeout=60, pool_timeout=60)
     app = ApplicationBuilder().token(BOT_TOKEN).request(request).build()
@@ -669,7 +633,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("lang", set_language))
-    app.add_handler(CommandHandler("cancel", cancel))
+    app.add_handler(CommandHandler("end", end_session))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_music))
     app.add_handler(CallbackQueryHandler(button_handler))
 
